@@ -33,38 +33,40 @@ vasco_business_case/
 The source files are CSV. Every downstream layer is written as Parquet instead because:
 
 - **Encoding is fixed automatically.** Parquet stores strings as UTF-8 internally, so whatever encoding the source CSV had, all layers downstream read clean characters.
-- **Columnar storage.** Analytical queries that touch only a few columns are significantly faster, which is especially relevant for variance calculations across 100+ columns.
+- **Great compression:performance ratio for queries.** Parquet format is well known within data engineering for this, which is wy it's often used in datalake solutions.
 - **Schema is embedded.** Column types are stored in the file, which reduces the risk of type mismatches when loading into a database or querying with a tool like DuckDB.
 
 ---
 
 ## Pipeline Layers
 
-The pipeline follows three layers, each written as a separate Parquet file.
+The pipeline follows three layers, each written as a separate Parquet file. 
 
 ### Raw Layer
 
-The CSV is read with automatic encoding detection (`chardet`). A 200KB sample of the file is used because chardet's confidence stabilises within the first few KB, so reading the full file would not change the result and would be slower on larger files. The data is written to Parquet as-is, with two metadata columns added to every row: `_ingestion_date` and `_source_file`. These allow any record to be traced back to the exact file and run that produced it.
+The CSV is read with automatic encoding detection (`chardet`). A 200KB sample of the file is used because chardet's way of working. This sample alone is enough to know with a certain confidence level, so reading the full file would not change the result and would be slower on larger files. The data is written to Parquet as-is, with two metadata columns added to every row: `_ingestion_date` and `_source_file`. These allow any record to be traced back to the exact file and run that produced it.
 
 ### Prepared Layer
 
 All business rules are applied here on a copy of the raw data, so the raw layer is never modified.
 
-| Rule | What was done |
-|------|---------------|
-| BR1 - Unique respondents | Deduplicated on `Respondent`, keeping the first occurrence. Business is warned via the log if duplicates are found, as this points to a setup issue in the survey tool. |
-| BR2 - Blank Student | Filled with `"No"`. A blank means the respondent is not a student, per the business definition. |
-| BR3 - Blank Employment | Filled with `"Employed full-time"`. Same reasoning as above. |
-| BR4 - More than 3 empty fields | Rows are **not dropped**. Instead, three columns are added: `empty_field_count`, `empty_fields` (list of which fields are null), and `more_than_three_empty` (boolean flag). Dropping approximately 96% of rows silently is not acceptable, so the business can filter using the flag and decide what to do. |
-| BR5 - Yearly salary | A new `salary_yearly` column is calculated from `Salary` and `SalaryType`. Weekly values are multiplied by 52, Monthly by 12, and Yearly is kept as-is. Rows with a salary value but no `SalaryType` are discarded because without knowing the frequency the value cannot be trusted. The original `Salary` and `SalaryType` columns are preserved. |
+
+| Rule                           | What was done                                                                                                                                                                                                                                                                                                                                       |
+| ------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| BR1 - Unique respondents       | Deduplicated on `Respondent`, keeping the first occurrence. Business is warned via the log if duplicates are found, as this points to a setup issue in the survey tool.                                                                                                                                                                             |
+| BR2 - Blank Student            | Filled with `"No"`. A blank means the respondent is not a student, per the business definition.                                                                                                                                                                                                                                                     |
+| BR3 - Blank Employment         | Filled with `"Employed full-time"`. Same reasoning as above.                                                                                                                                                                                                                                                                                        |
+| BR4 - More than 3 empty fields | Rows are **not dropped**. Instead, three columns are added: `empty_field_count`, `empty_fields` (list of which fields are null), and `more_than_three_empty` (boolean flag). If they were to be dropped, around 96% of rowswould be gone. With this approach, business can filter using the flag and decide what to do.                             |
+| BR5 - Yearly salary            | A new `salary_yearly` column is calculated from `Salary` and `SalaryType`. Weekly values are multiplied by 52, Monthly by 12, and Yearly is kept as-is. Rows with a salary value but no `SalaryType` are discarded because without knowing the frequency the value cannot be trusted. The original `Salary` and `SalaryType` columns are preserved. |
+
 
 The dataset also includes a `ConvertedSalary` column provided by the survey platform, already annualised and converted to USD at 2018 exchange rates. This is used for cross-country salary comparisons since local currencies would skew the result.
 
 ### Staging Layer
 
-A trimmed version of the prepared data with only the columns needed for the two analyses, plus key demographics so results can be broken down by country, dev type, employment, etc. Column names are renamed to `snake_case` for SQL compatibility.
+A specific table version of the prepared data with only the columns needed for the analyses. Key demographics attributes are kept so results can be broken down by country, dev type, employment, etc. Column names are renamed to `snake_case` for SQL compatibility.
 
-This is the **primary deliverable** (`fact_survey`). The full prepared dataset remains available in the Prepared layer if more columns are needed later.
+This is the main **table and that answers the business needs ->**`fact_survey`. The full prepared dataset remains available in the Prepared layer if more columns are needed later.
 
 ---
 
@@ -84,14 +86,14 @@ Variance is calculated across all numeric survey columns. Three columns are excl
 
 ## Table Schema
 
-See [`schema/create_tables.sql`](schema/create_tables.sql) for the full DDL.
+See `[schema/create_tables.sql](schema/create_tables.sql)` for the full DDL.
 
 Two tables are defined:
 
-- **`staging.fact_survey`** - one row per respondent, all columns needed for analysis.
-- **`staging.fact_variance`** - one row per survey question, with its variance across all respondents.
+- `**staging.fact_survey`** - one row per respondent, all columns needed for analysis.
+- `**staging.fact_variance**` - one row per survey question, with its variance across all respondents.
 
-`VARCHAR(100)` is used as a consistent default for all text columns. `dev_type` uses `VARCHAR(500)` because it is a semicolon-delimited multi-select field and can be long when a respondent selects many roles.
+`VARCHAR(100)` is used as a consistent default for all text columns. `dev_type` uses `VARCHAR(500)` because it can have a bigger selection of fields, in case a respondent selects many roles.
 
 ---
 
@@ -110,7 +112,7 @@ To run ad-hoc SQL queries against the output, the last cell in the notebook uses
 
 ## Architecture Diagram
 
-> _Diagram to be added._
+> *Diagram to be added.*
 
 ---
 
