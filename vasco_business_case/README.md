@@ -39,13 +39,17 @@ Architecture Diagram
 
 ## Running the Pipeline
 
-1. Install the required dependencies:
+1. Requires Python 3.10+. You can also just create a virtual environment first:
+   ```bash
+   python -m venv venv && source venv/bin/activate
+   ```
+2. Install the required dependencies:
    ```bash
    pip install -r requirements.txt
    ```
-2. Place `RawData.csv` and `Columns.csv` in `data/raw/`.
+2. Place `RawData.csv` and `Columns.csv` in `data/raw/`. (They're already in the Zip I sent, so this should not be necessary.)
 3. Open `notebooks/etl_pipeline.ipynb`.
-4. Check the first cell (parameters) and update the paths if the files are in a different location.
+4. Check the first cell (parameters) and update the paths in the case the files are in a different location. (Same as above)
 5. Run all cells in order.
 
 Output Parquet files are written to `data/raw_layer/`, `data/prepared_layer/`, and `data/staging_layer/`. Any files from a previous run are cleaned up automatically at the start, so you can run the notebook as many times as you want, without creating "trash". 
