@@ -30,7 +30,7 @@ vasco_business_case/
 
 ## Architecture Diagram
 
-![Architecture Diagram](docs/architecture.drawio.png)
+Architecture Diagram
 
 ---
 
@@ -41,7 +41,9 @@ vasco_business_case/
 3. Check the first cell (parameters) and update the paths if the files are in a different location.
 4. Run all cells in order.
 
-Output Parquet files are written to `data/raw_layer/`, `data/prepared_layer/`, and `data/staging_layer/`. Any files from a previous run are cleaned up automatically at the start.
+Output Parquet files are written to `data/raw_layer/`, `data/prepared_layer/`, and `data/staging_layer/`. Any files from a previous run are cleaned up automatically at the start, so you can run the notebook as many times as you want, without creating "trash". 
+
+Small note: Because the files only get deleted at the start of the notebook, they are only erased when running that cell. If you run everything just once, you'll keep files in the folders. It's not a problem at all, it's just for awarness.
 
 To run ad-hoc SQL queries against the output, the last cell in the notebook uses DuckDB to query the Parquet files directly with no database setup required.
 
@@ -51,7 +53,7 @@ To run ad-hoc SQL queries against the output, the last cell in the notebook uses
 
 The source files are CSV. Every downstream layer is written as Parquet instead because:
 
-- **Encoding is fixed automatically.** Parquet stores strings as UTF-8 internally, so whatever encoding the source CSV has, all layers downstream read clean characters.
+- **Encoding is fixed automatically.** Parquet stores everything as UTF-8 internally, so whatever encoding the source CSV has, all layers downstream read clean characters.
 - **Great compression and query performance.** Parquet is columnar, meaning queries that touch only a few columns skip the rest entirely. This is especially relevant for variance calculations across 100+ columns.
 - **Schema is embedded.** Column types are stored in the file, which reduces the risk of type mismatches when loading into a database or querying with a tool like DuckDB.
 
@@ -59,25 +61,26 @@ The source files are CSV. Every downstream layer is written as Parquet instead b
 
 ## Pipeline Layers
 
-The pipeline follows three layers, each written as a separate Parquet file.
+The pipeline follows three layers, each written as a separate Parquet file, in different directories.
 
 ### Raw Layer
 
-The pipeline reads the CSV using automatic encoding detection (`chardet`). A 200KB sample of the file is enough — chardet's confidence stabilises within the first few KB, so reading the full file would not change the result and would be slower on larger files. The data lands in the Raw Layer as-is, with two metadata columns added to every row: `_ingestion_date` and `_source_file`. These allow any record to be traced back to the exact file and run that produced it.
+The pipeline reads the CSV using automatic encoding detection (`chardet`). A 200KB sample of the file is enough — chardet's confidence stabilises within the first few KB, so reading the full file would not change the result and would be slower on larger files. This enables (`pandas`) to read the CSV. After converting everything to parquet, it will no longer be an issue, as I explained before.
+The data lands in the Raw Layer as-is, with two metadata columns added to every row: `_ingestion_date` and `_source_file`. These allow any record to be traced back to the exact file and run that produced it.
 
 ### Prepared Layer
 
-All business rules are applied to a copy of the raw data, so the Raw Layer is never modified.
+The business rules are applied to a copy of the raw data, so the Raw Layer is never modified. This is important to insure the Raw Layer is kept as a "source of truth" of what data was received in the CSVs.
 
-| Rule | What it does |
-| ---- | ------------ |
-| BR1 - Unique respondents | Deduplicates on `Respondent`, keeping the first occurrence. A warning is logged if duplicates are found, as this points to a setup issue in the survey tool. |
-| BR2 - Blank Student | Fills blank values with `"No"`. A blank means the respondent is not a student, per the business definition. |
-| BR3 - Blank Employment | Fills blank values with `"Employed full-time"`. Same reasoning as above. |
-| BR4 - More than 3 empty fields | Does **not** drop rows. Instead, adds three columns: `empty_field_count`, `empty_fields` (list of which fields are null), and `more_than_three_empty` (boolean flag). Dropping rows silently would remove around 96% of the dataset, so the flag is added to let the business decide what to do. |
-| BR5 - Yearly salary | Calculates a `salary_yearly` column from `Salary` and `SalaryType`. Weekly values are multiplied by 52, Monthly by 12, and Yearly is kept as-is. Rows with a salary value but no `SalaryType` are set to null — without knowing the frequency, the value cannot be trusted. The original `Salary` and `SalaryType` columns are preserved. |
 
-The dataset also includes a `ConvertedSalary` column provided by the survey platform, already annualised and converted to USD at 2018 exchange rates. The pipeline uses this for cross-country salary comparisons since local currencies would skew the result.
+| Rule                           | What it does                                                                                                                                                                                                                                                                                                                              |
+| ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| BR1 - Unique respondents       | Deduplicates on `Respondent`, keeping the first occurrence. A warning is logged if duplicates are found, as this points to a setup issue in the survey tool.                                                                                                                                                                              |
+| BR2 - Blank Student            | Fills blank values with `"No"`. According to the business case, ablank means the respondent is not a student.                                                                                                                                                                                                                          |
+| BR3 - Blank Employment         | Fills blank values with `"Employed full-time"`. Same as above.                                                                                                                                                                                                                                                                  |
+| BR4 - More than 3 empty fields | Does not drop rows. Instead, adds three columns: `empty_field_count`, `empty_fields` (list of which fields are null), and `more_than_three_empty` (boolean flag). Dropping rows would remove around 96% of the dataset, so I added the flag let the business decide what to do.                                          |
+| BR5 - Yearly salary            | Calculates a `salary_yearly` column from `Salary` and `SalaryType`. Weekly values are multiplied by 52, Monthly by 12, and Yearly is kept as-is. Rows with a salary value but no `SalaryType` are set to null, since without knowing the frequency, I cannot know if the value makes sense and it could skew the analysis of the client. The original `Salary` and `SalaryType` columns are preserved. |
+
 
 ### Staging Layer
 
@@ -103,38 +106,37 @@ The pipeline calculates variance across all numeric survey columns. Three column
 
 ## Table Schema
 
-See [`schema/create_tables.sql`](schema/create_tables.sql) for the full DDL.
+See `[schema/create_tables.sql](schema/create_tables.sql)` for the full DDL.
 
 Two tables are defined:
 
-- **`staging.fact_survey`** - one row per respondent, all columns needed for analysis.
-- **`staging.fact_variance`** - one row per survey question, with its variance across all respondents.
+- `**staging.fact_survey`** - one row per respondent, all columns needed for analysis.
+- `**staging.fact_variance**` - one row per survey question, with its variance across all respondents.
 
-`VARCHAR(100)` is the default for all text columns. `dev_type` uses `VARCHAR(500)` because it is a semicolon-delimited multi-select field and can be long when a respondent selects many roles.
+`VARCHAR(100)` is the default for all text columns.
 
 ---
 
 ## Cloud Implementation (Azure / Microsoft Fabric)
 
-The pipeline runs locally using Python and pandas. The same logic translates to Azure without structural changes — only the paths and execution environment change.
+The pipeline runs locally using Python and pandas. The same logic translates to Azure without structural changes. The only thing changing would be the paths and execution environment.
 
 ### Storage
 
-Each layer is stored in **Azure Data Lake Storage Gen2 (ADLS Gen2)** as Parquet files, partitioned by ingestion date. The three-layer structure (Raw, Prepared, Staging) maps directly to separate containers or folders in the same storage account.
+Each layer can be stored in **Azure Data Lake Storage** as Parquet files, partitioned by ingestion date. The three-layer structure (Raw, Prepared, Staging) maps directly to separate containers or folders in the same storage account. The partitioning by ingestion data would make it even better for the client to analyse the data, by ensuring only the data in the partitions relevant to the client queries is scanned and loaded.
 
 ### Processing
 
-The notebook logic maps 1:1 to a **Microsoft Fabric Notebook** or an **Azure Databricks** notebook using PySpark. The main difference is that `pd.read_csv` and `df.to_parquet` are replaced with Spark equivalents, and file paths use the `abfss://` format pointing to ADLS Gen2. The business rule logic itself does not change.
+The notebook logic maps 1:1 to a **Microsoft Fabric Notebook**. It is basically Microsoft's version of Jupyter Notebook in their "ecosystem". Or if I wanted to use Spark to process the data (no need here since it was a small amount of data), I could even use a **Azure Databricks** notebook using PySpark. It would just be small changes in some functions use to open the CSV files and creating dataframes The code logic, flow and business rules itself wouldn't change at all. I am someone who doesn't like to use overblown solutions to simple problems, so for data sizes like this, I would probably stay with pandas and dataframes instead of PySpark. I would only change if the data amount was expected to scale.
 
 ### Orchestration
 
-A **Fabric Data Factory pipeline** (or Azure Data Factory) triggers the notebook daily on a schedule. The input file paths are passed as parameters to the notebook, which is why they are defined in a separate parameters cell at the top.
+A **Fabric Data Factory pipeline** could trigger the notebook daily on a schedule. The input file paths could be passed as parameters to the notebook, which is why I already defined them in a separate parameters cell at the top of the notebook. 
+Other possibility would be triggered when a new file would be uploaded to a specific location on Azure Data Lake Storage, but the specific code would have to be developed for this, and some sort of notification system would needed to be set up for orchastrating all of this. 
+
+Like I mentioned before, I prefer to keep simple solutions for simple problems, and not spend too much time in focusing in overengineering things. If the problem gets solved by a simple solution, I prefer to implement that, and spend the spare time talking to the users to see if there is any other needs or edge cases that need to be covered by the code.
 
 ### Serving
 
-There are two options for making the output queryable in Azure:
-
-- **Fabric Data Warehouse** - the DDL in `create_tables.sql` is executed directly to create the tables, and a `COPY INTO` command loads the Parquet files into them. This gives a traditional SQL interface.
-- **Fabric Lakehouse with SQL Analytics Endpoint** - if the pipeline writes Delta format instead of Parquet, Fabric automatically exposes the files as queryable tables via a SQL endpoint with no DDL required. The `create_tables.sql` file serves as schema documentation only in this case.
-
-For a first iteration at this scale, the Lakehouse + SQL Analytics Endpoint path is simpler to set up and has lower operational overhead.
+To make the output queryable in Azure, I would probably use **Fabric Data Warehouse**. The DDL in `create_tables.sql` can be executed directly to create the tables, and a `COPY INTO` command would load the Parquet files into them. This would create a "normal" SQL interface in Fabric. 
+Then, it would be a matter of building any reporting solutions of Fabric connected to these tables and the reports would get the data necessary.
