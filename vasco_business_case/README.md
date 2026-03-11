@@ -7,6 +7,9 @@ A daily survey dataset is received as a CSV file. The pipeline ingests it, appli
 1. Which survey questions have the highest variance in responses?
 2. Is there a relationship between years of coding experience and salary?
 
+This README gives the general flow and my main decisions. I tried to comment the code as much as I could explaining why I do certain things, at the different stages. 
+If there is some information in this document that is not clear, you can have a look at the comments in the Jupyter Notebook. Otherwise, I'll be glad to do my best to explain it in our next conversation :)
+
 ---
 
 ## Project Structure
@@ -36,10 +39,14 @@ Architecture Diagram
 
 ## Running the Pipeline
 
-1. Place `RawData.csv` and `Columns.csv` in `data/raw/`.
-2. Open `notebooks/etl_pipeline.ipynb`.
-3. Check the first cell (parameters) and update the paths if the files are in a different location.
-4. Run all cells in order.
+1. Install the required dependencies:
+   ```bash
+   pip install -r requirements.txt
+   ```
+2. Place `RawData.csv` and `Columns.csv` in `data/raw/`.
+3. Open `notebooks/etl_pipeline.ipynb`.
+4. Check the first cell (parameters) and update the paths if the files are in a different location.
+5. Run all cells in order.
 
 Output Parquet files are written to `data/raw_layer/`, `data/prepared_layer/`, and `data/staging_layer/`. Any files from a previous run are cleaned up automatically at the start, so you can run the notebook as many times as you want, without creating "trash". 
 
